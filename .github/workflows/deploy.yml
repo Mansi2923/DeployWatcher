@@ -14,11 +14,8 @@ jobs:
         uses: peter-evans/create-deployment@v4
         with:
           environment: production
-          transient_environment: false
-          auto_inactive: true
 
       - name: Set deployment status to success
         uses: peter-evans/create-deployment-status@v4
         with:
-          environment: production
           state: success
