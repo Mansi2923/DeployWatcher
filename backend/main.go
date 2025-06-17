@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -111,15 +112,56 @@ func getDeployment(w http.ResponseWriter, r *http.Request) {
 
 func generateID() string {
 	return time.Now().Format("20060102150405")
-} 
+}
 
 func githubWebhookHandler(w http.ResponseWriter, r *http.Request) {
-    // For now, just log the event and return 200 OK
-    var payload map[string]interface{}
-    if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-        http.Error(w, "Invalid payload", http.StatusBadRequest)
-        return
-    }
-    log.Printf("Received GitHub webhook: %+v\n", payload)
-    w.WriteHeader(http.StatusOK)
+	var payload map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid payload", http.StatusBadRequest)
+		return
+	}
+	log.Printf("Received GitHub webhook: %+v\n", payload)
+
+	// Check if this is a deployment or deployment_status event
+	eventType := r.Header.Get("X-GitHub-Event")
+	if eventType == "deployment" || eventType == "deployment_status" {
+		// Extract deployment details
+		var deployment Deployment
+		if eventType == "deployment" {
+			// For deployment events, extract from payload
+			deployment = Deployment{
+				ID:          fmt.Sprintf("%v", payload["id"]),
+				AppName:     fmt.Sprintf("%v", payload["repository"].(map[string]interface{})["name"]),
+				Environment: fmt.Sprintf("%v", payload["environment"]),
+				Status:      "queued", // Default status for new deployments
+				StartedAt:   time.Now(),
+				CommitHash:  fmt.Sprintf("%v", payload["sha"]),
+				Branch:      fmt.Sprintf("%v", payload["ref"]),
+			}
+		} else if eventType == "deployment_status" {
+			// For deployment_status events, update existing deployment
+			deploymentID := fmt.Sprintf("%v", payload["deployment"].(map[string]interface{})["id"])
+			status := fmt.Sprintf("%v", payload["state"])
+			for i, d := range deployments {
+				if d.ID == deploymentID {
+					deployments[i].Status = status
+					if status == "success" || status == "failure" {
+						deployments[i].CompletedAt = time.Now()
+					}
+					log.Printf("Updated deployment %s status to %s\n", deploymentID, status)
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+			}
+			log.Printf("Deployment %s not found\n", deploymentID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Add new deployment to the list
+		deployments = append(deployments, deployment)
+		log.Printf("Added new deployment: %+v\n", deployment)
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
